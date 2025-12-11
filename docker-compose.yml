@@ -1,18 +1,19 @@
 version: '3.8'
 
 services:
-  # Metadata Database
-  mongo:
-    image: mongo:latest
-    container_name: nas-mongo
+  # Metadata Database (Postgres)
+  postgres:
+    image: postgres:16-alpine
+    container_name: nas-postgres
     restart: always
     ports:
-      - "27017:27017"
+      - "5432:5432"
     volumes:
-      - ./data/db:/data/db
+      - ./data/postgres:/var/lib/postgresql/data
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: nas_supapp
 
   # Object Storage (S3 Compatible)
   minio:
@@ -29,7 +30,7 @@ services:
       MINIO_ROOT_PASSWORD: password
     command: server /data --console-address ":9001"
 
-  # Redis (Optional, for Event Bus/Cache later)
+  # Redis (Optional)
   redis:
     image: redis:alpine
     container_name: nas-redis
