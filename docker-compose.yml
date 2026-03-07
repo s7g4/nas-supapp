@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  # Frontend (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nas-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_SITE_URL=http://localhost:3000
+      - BETTER_AUTH_URL=http://localhost:3000
+      - BETTER_AUTH_SECRET=p0m3grAn4t3_s3cr3t
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/nas_supapp
+    depends_on:
+      - core
+      - postgres
+
+
   # Metadata Database (Postgres)
   postgres:
     image: postgres:16-alpine
@@ -37,6 +57,53 @@ services:
     restart: always
     ports:
       - "6379:6379"
+
+  # Core (FastAPI Microkernel)
+  core:
+    build: ./core
+    container_name: nas-core
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://admin:password@postgres:5432/nas_supapp
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=minio:9000
+    volumes:
+      - ./data/objects:/data
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  # LiveKit (WebRTC Streaming)
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: nas-livekit
+    restart: always
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    command: "--keys 'devkey: secret' --redis-host redis:6379"
+    depends_on:
+      - redis
+
+  # Transfer Engine (Go QUIC)
+  transfer-engine:
+    build: ./transfer-engine
+    container_name: nas-transfer-engine
+    restart: always
+    ports:
+      - "8080:8080"      # HTTP (Legacy/Health)
+      - "6666:6666/udp"  # QUIC
+    environment:
+      - PORT=8080
+      - CORE_URL=http://core:8000
+    volumes:
+      - ./data/objects:/data
+    depends_on:
+      - core
 
 volumes:
   data:

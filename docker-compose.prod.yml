@@ -1,0 +1,105 @@
+services:
+  # Database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-nasdb}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    restart: always
+    networks:
+      - nas-net
+
+  # Object Storage (MinIO)
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: always
+    networks:
+      - nas-net
+
+  # Cache & PubSub
+  redis:
+    image: redis:alpine
+    restart: always
+    networks:
+      - nas-net
+
+  # Core (FastAPI - Microkernel)
+  core:
+    build: 
+      context: ./core
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-nasdb}
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio:9000
+      SECRET_KEY: ${SECRET_KEY:-change_this_secret_in_prod}
+    volumes:
+      - ./data/objects:/data # Shared storage for transcode/stream
+    restart: always
+    networks:
+      - nas-net
+
+  # LiveKit (WebRTC Streaming)
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: nas-livekit
+    restart: always
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    command: "--keys 'prodkey: ${SECRET_KEY}' --redis-host redis:6379"
+    depends_on:
+      - redis
+
+  # Transfer Engine (Go - QUIC)
+  transfer-engine:
+    build:
+      context: ./transfer-engine
+    environment:
+      PORT: 6666 # QUIC UDP
+      CORE_URL: http://core:8000
+    ports:
+      - "6666:6666/udp" # QUIC
+    volumes:
+      - ./data/objects:/data # Shared Volume
+    restart: always
+    networks:
+      - nas-net
+
+  # Frontend (Next.js)
+  frontend:
+    build: 
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_SITE_URL=http://localhost:3000
+      - BETTER_AUTH_URL=http://localhost:3000
+      - BETTER_AUTH_SECRET=${SECRET_KEY}
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/nas_supapp
+    depends_on:
+      - core
+    restart: always
+    networks:
+      - nas-net
+
+networks:
+  nas-net:
+    driver: bridge
